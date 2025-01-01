@@ -44,16 +44,16 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	const maxMemory = 10 << 20
 	if err := r.ParseMultipartForm(maxMemory); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Couldn't parse thumbnail file", err)
+		respondWithError(w, http.StatusBadRequest, "Couldn't parse thumbnail form file", err)
 		return
 	}
 
-	file, header, err := r.FormFile("thumbnail")
+	formFile, header, err := r.FormFile("thumbnail")
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Couldn't get thumbnail file", err)
+		respondWithError(w, http.StatusBadRequest, "Couldn't get thumbnail form file", err)
 		return
 	}
-	defer file.Close()
+	defer formFile.Close()
 
 	contentType := header.Header.Get("Content-Type")
 	if contentType == "" {
@@ -61,13 +61,24 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	assetPath, err := getAssetPath(contentType)
+	validMediaTypes := map[string]struct{}{
+		"image/jpeg": {},
+		"image/png":  {},
+	}
+
+	mediaType, err := contentTypeToMediaType(contentType, validMediaTypes)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Content-Type is not an accepted MIME type", err)
+		respondWithError(w, http.StatusBadRequest, "Incorrect Content-Type header", err)
 		return
 	}
 
-	assetDiskPath := cfg.getAssetDiskPath(assetPath)
+	assetFilename, err := getAssetFilename(mediaType)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Failed to create asset filename", err)
+		return
+	}
+
+	assetDiskPath := cfg.getAssetDiskPath(assetFilename)
 
 	localFile, err := os.Create(assetDiskPath)
 	if err != nil {
@@ -76,13 +87,13 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 	defer localFile.Close()
 
-	_, err = io.Copy(localFile, file)
+	_, err = io.Copy(localFile, formFile)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Failed to copy thumbnail contents to file", err)
 		return
 	}
 
-	url := cfg.getAssetURL(assetPath)
+	url := cfg.getAssetURL(assetFilename)
 	video.ThumbnailURL = &url
 	if err := cfg.db.UpdateVideo(video); err != nil {
 		respondWithError(w, http.StatusBadRequest, "Couldn't update video information in database", err)

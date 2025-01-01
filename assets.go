@@ -17,40 +17,10 @@ func (cfg apiConfig) ensureAssetsDir() error {
 	return nil
 }
 
-func getAssetPath(mediaType string) (string, error) {
-	ext, err := mediaTypeToExt(mediaType)
+func contentTypeToMediaType(contentTypeHeader string, validMediaTypes map[string]struct{}) (string, error) {
+	mediaType, _, err := mime.ParseMediaType(contentTypeHeader)
 	if err != nil {
-		return "", err
-	}
-
-	randomBytes := make([]byte, 32)
-	_, err = rand.Read(randomBytes)
-	if err != nil {
-		return "", err
-	}
-
-	randomBase64String := base64.RawURLEncoding.EncodeToString(randomBytes)
-
-	return fmt.Sprintf("%s%s", randomBase64String, ext), nil
-}
-
-func (cfg apiConfig) getAssetDiskPath(assetPath string) string {
-	return filepath.Join(cfg.assetsRoot, assetPath)
-}
-
-func (cfg apiConfig) getAssetURL(assetPath string) string {
-	return fmt.Sprintf("http://localhost:%s/assets/%s", cfg.port, assetPath)
-}
-
-func mediaTypeToExt(contentyTypeHeader string) (string, error) {
-	mediaType, _, err := mime.ParseMediaType(contentyTypeHeader)
-	if err != nil {
-		return "nil", fmt.Errorf("error parsing media type from Content-Type header '%s': %w", contentyTypeHeader, err)
-	}
-
-	validMediaTypes := map[string]struct{}{
-		"image/jpeg": {},
-		"image/png":  {},
+		return "nil", fmt.Errorf("error parsing media type from Content-Type header '%s': %w", contentTypeHeader, err)
 	}
 
 	_, ok := validMediaTypes[mediaType]
@@ -58,9 +28,43 @@ func mediaTypeToExt(contentyTypeHeader string) (string, error) {
 		return "", fmt.Errorf("invalid media type '%s'", mediaType)
 	}
 
+	return mediaType, nil
+}
+
+func getAssetFilename(mediaType string) (string, error) {
+	randomBytes := make([]byte, 32)
+	_, err := rand.Read(randomBytes)
+	if err != nil {
+		return "", err
+	}
+
+	randomBase64String := base64.RawURLEncoding.EncodeToString(randomBytes)
+	ext := mediaTypeToExt(mediaType)
+
+	return fmt.Sprintf("%s.%s", randomBase64String, ext), nil
+}
+
+func (cfg apiConfig) getAssetDiskPath(assetFilename string) string {
+	return filepath.Join(cfg.assetsRoot, assetFilename)
+}
+
+func (cfg apiConfig) getAssetURL(assetFilename string) string {
+	return fmt.Sprintf("http://localhost:%s/assets/%s", cfg.port, assetFilename)
+}
+
+func (cfg apiConfig) getS3AssetURL(assetFilename string) string {
+	return fmt.Sprintf(
+		"https://%s.s3.%s.amazonaws.com/%s",
+		cfg.s3Bucket,
+		cfg.s3Region,
+		assetFilename,
+	)
+}
+
+func mediaTypeToExt(mediaType string) string {
 	parts := strings.Split(mediaType, "/")
 	if len(parts) != 2 {
-		return "", fmt.Errorf("failed to get extension from media type '%s'", mediaType)
+		return "bin"
 	}
-	return "." + parts[1], nil
+	return parts[1]
 }

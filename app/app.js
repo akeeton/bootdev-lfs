@@ -260,8 +260,8 @@ function viewVideo(video) {
   if (!video.thumbnail_url) {
     thumbnailImg.style.display = 'none';
   } else {
-    thumbnailImg.style.display = 'block';
-    thumbnailImg.src = video.thumbnail_url;
+    thumbnailImg.style.display = "block";
+    thumbnailImg.src = `${video.thumbnail_url}?v=${Date.now()}`;
   }
 
   const videoPlayer = document.getElementById('video-player');

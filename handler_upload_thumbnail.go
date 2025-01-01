@@ -30,6 +30,16 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	video, err := cfg.db.GetVideo(videoID)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't find video", err)
+		return
+	}
+	if video.UserID != userID {
+		respondWithError(w, http.StatusUnauthorized, "Not authorized to update this video", nil)
+		return
+	}
+
 	fmt.Println("uploading thumbnail for video", videoID, "by user", userID)
 
 	const maxMemory = 10 << 20
@@ -45,30 +55,18 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 	defer file.Close()
 
-	mediaType := header.Header.Get("Content-Type")
-	if mediaType == "" {
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" {
 		respondWithError(w, http.StatusBadRequest, "Missing Content-Type for thumbnail", nil)
 		return
 	}
 
-	video, err := cfg.db.GetVideo(videoID)
+	assetPath, err := getAssetPath(videoID, contentType)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't find video", err)
-		return
-	}
-	if video.UserID != userID {
-		respondWithError(w, http.StatusUnauthorized, "Not authorized to update this video", nil)
+		respondWithError(w, http.StatusBadRequest, "Content-Type is not an accepted MIME type", err)
 		return
 	}
 
-	var fileExtension string
-	_, err = fmt.Sscanf(mediaType, "image/%s", &fileExtension)
-	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Got non-image Content-Type header", err)
-		return
-	}
-
-	assetPath := getAssetPath(videoID, mediaType)
 	assetDiskPath := cfg.getAssetDiskPath(assetPath)
 
 	localFile, err := os.Create(assetDiskPath)

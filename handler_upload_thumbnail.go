@@ -61,7 +61,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	assetPath, err := getAssetPath(videoID, contentType)
+	assetPath, err := getAssetPath(contentType)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Content-Type is not an accepted MIME type", err)
 		return

@@ -1,10 +1,15 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
+	"os/exec"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -102,11 +107,20 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// FIXME Ignore errors and default to `aspectRatio = "other"`
+	aspectRatio, err := getVideoAspectRatioName(localTempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed to get aspect ratio", err)
+		return
+	}
+
+	assetKey := aspectRatio + "/" + assetFilename
+
 	_, err = cfg.s3Client.PutObject(
 		r.Context(),
 		&s3.PutObjectInput{
 			Bucket:      aws.String(cfg.s3Bucket),
-			Key:         aws.String(assetFilename),
+			Key:         aws.String(assetKey),
 			Body:        localTempFile,
 			ContentType: aws.String(mediaType),
 		},
@@ -116,12 +130,70 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	url := cfg.getS3AssetURL(assetFilename)
+	url := cfg.getS3AssetURL(assetKey)
 	video.VideoURL = &url
 	if err := cfg.db.UpdateVideo(video); err != nil {
 		respondWithError(w, http.StatusBadRequest, "Couldn't update video information in database", err)
 		return
 	}
 
+	fmt.Println("Saved video file to AWS S3 at", url)
+
 	respondWithJSON(w, http.StatusOK, video)
+}
+
+func getPercentError(actual float64, expected float64) float64 {
+	percentError := math.Abs(actual-expected) / math.Abs(expected) * 100.0
+	fmt.Println("percent error:", percentError)
+	return percentError
+}
+
+func getVideoAspectRatioName(filePath string) (string, error) {
+	ffprobeCmd := exec.Command(
+		"ffprobe",
+		"-v", "error",
+		"-print_format", "json",
+		"-show_streams", filePath,
+	)
+
+	var ffprobeOut bytes.Buffer
+	ffprobeCmd.Stdout = &ffprobeOut
+
+	if err := ffprobeCmd.Run(); err != nil {
+		return "", fmt.Errorf("error running ffprobe: %w", err)
+	}
+
+	var ffprobeShowStreams struct {
+		Streams []struct {
+			Width  int `json:"width"`
+			Height int `json:"height"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(ffprobeOut.Bytes(), &ffprobeShowStreams); err != nil {
+		return "", fmt.Errorf("error unmarshalling ffprobe output: %w", err)
+	}
+
+	if len(ffprobeShowStreams.Streams) < 1 {
+		return "", errors.New("ffprobe output has no stream information: %w")
+	}
+
+	width := ffprobeShowStreams.Streams[0].Width
+	height := ffprobeShowStreams.Streams[0].Height
+	if width <= 0 || height <= 0 {
+		return "", fmt.Errorf("video has nonpositive width (%d) or height (%d)", width, height)
+	}
+
+	const portraitAspectRatio = 9.0 / 16.0
+	const landscapeAspectRatio = 16.0 / 9.0
+	const maxPercentError = 1.0 // A percentage, not a ratio
+
+	aspectRatioName := "other"
+	aspectRatio := float64(width) / float64(height)
+	if getPercentError(aspectRatio, portraitAspectRatio) <= maxPercentError {
+		aspectRatioName = "portrait"
+	} else if getPercentError(aspectRatio, landscapeAspectRatio) <= maxPercentError {
+		aspectRatioName = "landscape"
+	}
+
+	return aspectRatioName, nil
 }

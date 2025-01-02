@@ -52,12 +52,12 @@ func (cfg apiConfig) getAssetURL(assetFilename string) string {
 	return fmt.Sprintf("http://localhost:%s/assets/%s", cfg.port, assetFilename)
 }
 
-func (cfg apiConfig) getS3AssetURL(assetFilename string) string {
+func (cfg apiConfig) getS3AssetURL(assetKey string) string {
 	return fmt.Sprintf(
 		"https://%s.s3.%s.amazonaws.com/%s",
 		cfg.s3Bucket,
 		cfg.s3Region,
-		assetFilename,
+		assetKey,
 	)
 }
 

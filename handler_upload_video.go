@@ -114,6 +114,20 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	localProcessedFilepath, err := processVideoForFastStart(localTempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed to process video file", err)
+		return
+	}
+	defer os.Remove(localProcessedFilepath)
+
+	localProcessedFile, err := os.Open(localProcessedFilepath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed to open processed video file", err)
+		return
+	}
+	defer localProcessedFile.Close()
+
 	assetKey := aspectRatio + "/" + assetFilename
 
 	_, err = cfg.s3Client.PutObject(
@@ -121,7 +135,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		&s3.PutObjectInput{
 			Bucket:      aws.String(cfg.s3Bucket),
 			Key:         aws.String(assetKey),
-			Body:        localTempFile,
+			Body:        localProcessedFile,
 			ContentType: aws.String(mediaType),
 		},
 	)
@@ -196,4 +210,34 @@ func getVideoAspectRatioName(filePath string) (string, error) {
 	}
 
 	return aspectRatioName, nil
+}
+
+func processVideoForFastStart(filePath string) (string, error) {
+	processedFilePath := filePath + ".processing"
+
+	ffmpegCmd := exec.Command(
+		"ffmpeg",
+		"-i", filePath,
+		"-c", "copy",
+		"-movflags", "faststart",
+		"-f", "mp4",
+		processedFilePath,
+	)
+
+	var stderr bytes.Buffer
+	ffmpegCmd.Stderr = &stderr
+
+	if err := ffmpegCmd.Run(); err != nil {
+		return "", fmt.Errorf("error processing video: %s, %v", stderr.String(), err)
+	}
+
+	fileInfo, err := os.Stat(processedFilePath)
+	if err != nil {
+		return "", fmt.Errorf("could not stat processed file: %v", err)
+	}
+	if fileInfo.Size() == 0 {
+		return "", fmt.Errorf("processed file is empty")
+	}
+
+	return processedFilePath, nil
 }

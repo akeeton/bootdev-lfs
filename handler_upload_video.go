@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,10 +11,13 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
+	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 	"github.com/google/uuid"
 )
 
@@ -144,16 +148,65 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	url := cfg.getS3AssetURL(assetKey)
+	url := fmt.Sprintf("%s,%s", cfg.s3Bucket, assetKey)
 	video.VideoURL = &url
 	if err := cfg.db.UpdateVideo(video); err != nil {
 		respondWithError(w, http.StatusBadRequest, "Couldn't update video information in database", err)
 		return
 	}
 
-	fmt.Println("Saved video file to AWS S3 at", url)
+	video, err = cfg.dbVideoToSignedVideo(video)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed to generate presigned video URL", err)
+		return
+	}
+
+	fmt.Println("Saved video file to AWS S3 and serving it with presigned URL:", video.VideoURL)
 
 	respondWithJSON(w, http.StatusOK, video)
+}
+
+func generatePresignedURL(
+	s3Client *s3.Client,
+	bucket, key string,
+	expireTime time.Duration,
+) (string, error) {
+	presignClient := s3.NewPresignClient(s3Client)
+	presignedRequest, err := presignClient.PresignGetObject(
+		context.TODO(),
+		&s3.GetObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+		},
+		s3.WithPresignExpires(expireTime),
+	)
+	if err != nil {
+		return "", fmt.Errorf("error calling PresignGetObject: %w", err)
+	}
+
+	return presignedRequest.URL, nil
+}
+
+func (cfg *apiConfig) dbVideoToSignedVideo(video database.Video) (database.Video, error) {
+	if video.VideoURL == nil {
+		return video, nil // errors.New("video URL is nil")
+	}
+
+	bucketAndKey := strings.Split(*video.VideoURL, ",")
+	if len(bucketAndKey) != 2 {
+		return video, errors.New("video URL not in the format 'bucket,key'")
+	}
+
+	bucket := bucketAndKey[0]
+	key := bucketAndKey[1]
+
+	videoURL, err := generatePresignedURL(cfg.s3Client, bucket, key, 5*time.Minute)
+	if err != nil {
+		return video, fmt.Errorf("error generating presigned URL: %w", err)
+	}
+
+	video.VideoURL = &videoURL
+	return video, nil
 }
 
 func getPercentError(actual float64, expected float64) float64 {

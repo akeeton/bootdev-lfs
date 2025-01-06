@@ -151,7 +151,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	fmt.Println("Saved video file to AWS S3 at", url)
+	fmt.Println("Saved video file to AWS S3, available at", url)
 
 	respondWithJSON(w, http.StatusOK, video)
 }
